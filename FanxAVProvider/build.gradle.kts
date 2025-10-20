@@ -1,10 +1,10 @@
 dependencies {
-    implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.recyclerview:recyclerview:1.3.2")
+    implementation("com.google.android.material:material:1.13.0")
+    implementation("androidx.recyclerview:recyclerview:1.4.0")
 }
 
 // Use an integer for version numbers
-version = 1
+version = 5
 
 cloudstream {
     // All of these properties are optional, you can safely remove any of them.
