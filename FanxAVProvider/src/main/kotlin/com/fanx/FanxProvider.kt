@@ -9,6 +9,10 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 import org.jsoup.nodes.Element
 import android.util.Base64
 import android.util.Log
+import com.lagradost.cloudstream3.USER_AGENT
+import okhttp3.Interceptor
+import okhttp3.Request
+import com.lagradost.cloudstream3.ui.WebviewFragment
 
 
 class FanxProvider : MainAPI() {
@@ -98,11 +102,14 @@ class FanxProvider : MainAPI() {
 
     // Hàm riêng để xử lý HLS (cả mã hóa và không mã hóa)
     private suspend fun handleHls(
+        playlist: Boolean,
         m3u8Url: String,
         qualityName: String,
         callback: (ExtractorLink) -> Unit
     ) {
-        val m3u8Content = app.get(m3u8Url).text
+        val m3u8Content = if (playlist) {
+            app.get(m3u8Url).text
+        } else m3u8Url
         val keyLine = m3u8Content.lines().find { it.contains("#EXT-X-KEY") }
 
         val extractorLink = newExtractorLink(
@@ -142,34 +149,83 @@ class FanxProvider : MainAPI() {
             var finalM3u8Url = ""
             if (data.contains("123.seekplayer")) {
                 Log.d(TAG, "load server 123.seekplayer")
-                    val res123 = app.get(
+                    // Không cần gán kết quả cho 'res123' nữa vì link sẽ được lấy qua callback
+                    app.get(
                         url = data,
                         referer = mainUrl,
                         headers = mapOf("User-Agent" to PC_USER_AGENT),
                         interceptor = WebViewResolver(
-                            interceptUrl = Regex(""".m3u8"""),
+                            // 1. Vô hiệu hóa interceptUrl, vì nó không bắt được fetch/XHR.
+                            //    Chúng ta sẽ dựa hoàn toàn vào script và callback.
+                            interceptUrl = Regex("z-z-z-never-match-z-z-z"),
+
+                            // 2. Thêm scriptCallback để nhận URL mà JavaScript gửi về.
+                            scriptCallback = { urlvideo ->
+                                    // Bây giờ chúng ta biết chắc url là một chuỗi hợp lệ
+                                        Log.d(TAG, "scriptCallback ĐÃ XÁC THỰC được URL m3u8: $urlvideo")
+                                        finalM3u8Url = urlvideo
+                            },
+
+                            // 3. Nâng cấp script để thực hiện cả hai nhiệm vụ: click và "nghe lén".
                             script = """
-                    // Tạo một vòng lặp để kiểm tra sự tồn tại của nút player
-                    // Vòng lặp này sẽ chạy 10 lần mỗi giây (mỗi 100ms)
-                    const intervalId = setInterval(function() {
-                        // Tìm phần tử có id là 'player-button'
-                        const playerButton = document.querySelector('#player-button');
-                        
-                        // Nếu tìm thấy phần tử này
-                        if (playerButton) {
-                            // Thực hiện hành động click vào nó
-                            playerButton.click();
-                            
-                            // Rất quan trọng: Dừng vòng lặp lại sau khi đã click
-                            // để tránh click nhiều lần không cần thiết.
-                            clearInterval(intervalId);
-                        }
-                    }, 100); 
-                """,
+    var isM3u8Found = false;
+
+    // PHẦN 1: CLICK NÚT
+    function tryToClick() {
+        var playerButton = document.querySelector('#player-button-container');
+        if (playerButton) {
+            playerButton.click();
+        } else {
+            setTimeout(tryToClick, 1000);
+        }
+    }
+    setTimeout(tryToClick, 500);
+
+    // PHẦN 2: PHÁT HIỆN MẠNG "MỘT LẦN DUY NHẤT"
+    var originalFetch = window.fetch;
+    var originalOpen = XMLHttpRequest.prototype.open;
+
+    function interceptAndSend(url) {
+        if (isM3u8Found) return;
+        // Chỉ gửi đi nếu url là chuỗi hợp lệ VÀ chứa m3u8
+        if (typeof url === 'string' && /m3u8/.test(url)) {
+            isM3u8Found = true;
+setTimeout(function() {
+    // Chuyển đổi 'url' thành một chuỗi ký tự một cách an toàn
+    var urlAsText = String(url); 
+
+    // Gửi chuỗi đã được đảm bảo đi
+    window.CS3_WEBVIEW_SCRIPT_CALLBACK(urlAsText);
+}, 500);
+            window.fetch = originalFetch;
+            XMLHttpRequest.prototype.open = originalOpen;
+        }
+    }
+
+    window.fetch = function() {
+        var url = arguments[0] instanceof Request ? arguments[0].url : arguments[0];
+        interceptAndSend(url);
+        return originalFetch.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.open = function() {
+        var url = arguments[1];
+        interceptAndSend(url);
+        originalOpen.apply(this, arguments);
+    };
+""",
                         ),
-                        timeout = 12000L,
+                        // Tăng thời gian chờ để có đủ thời gian cho các hành động
+                        timeout = 20000L, // 20 giây
                     )
-                finalM3u8Url = res123.url
+
+                    // 4. Kiểm tra xem link đã được gán thành công chưa
+                    if (!finalM3u8Url.contains(".m3u8")) {
+                        throw ErrorLoadingException("Không thể bắt được link M3U8 trong thời gian chờ.")
+                    }
+
+                    // Tại đây, biến 'finalM3u8Url' đã chứa link bạn cần
+                    Log.d(TAG, "Đã lấy được link thành công: $finalM3u8Url")
             } else {
                 // WebViewResolver giờ đây chủ yếu dùng để chạy script và đợi callback
                 app.get(
@@ -232,10 +288,11 @@ class FanxProvider : MainAPI() {
                     throw ErrorLoadingException("Không thể tìm thấy link M3U8 (GET request) trong thời gian chờ")
                 }
             }
+            Log.d(TAG, "Phát hiện Link m3u8: $finalM3u8Url")
             finalM3u8 = app.get(finalM3u8Url).text
 
             if (finalM3u8.contains("#EXT-X-STREAM-INF")) {
-                Log.d(TAG, "Phát hiện Master Playlist, đang parse các chất lượng...")
+                Log.d(TAG, "Phát hiện Playlist, đang parse các chất lượng...")
                 M3u8Helper.generateM3u8(
                     name,
                     finalM3u8Url,
@@ -244,14 +301,14 @@ class FanxProvider : MainAPI() {
                 ).amap { stream ->
                     Log.d(TAG, "Đã parse được link chất lượng: ${stream.name} - ${stream.url}")
                     try {
-                            handleHls(stream.url, stream.name, callback)
+                            handleHls(true,stream.url, stream.name, callback)
                     } catch (e: Exception) {
                         Log.e(TAG, "Lỗi khi xử lý link chất lượng ${stream.name}: ${stream.url}", e)
                     }
                 }
             } else {
-                Log.d(TAG, "Phát hiện Media Playlist, xử lý trực tiếp.")
-                handleHls(finalM3u8Url, this.name, callback)
+                Log.d(TAG, "Phát hiện Media, xử lý trực tiếp.")
+                handleHls(false,finalM3u8Url, this.name, callback)
             }
             return true
         } catch (e: Exception) {
