@@ -86,7 +86,7 @@ class FanxProvider : MainAPI() {
         }
     }
     override suspend fun loadLinks(
-        data: String, // Đây là URL của seekplayer
+        data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit

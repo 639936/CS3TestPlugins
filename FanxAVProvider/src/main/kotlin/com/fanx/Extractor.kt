@@ -14,7 +14,7 @@ import javax.crypto.spec.SecretKeySpec
 import kotlin.text.toByteArray
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
-class Seekplayer : ExtractorApi() {
+open class Seekplayer : ExtractorApi() {
     override var name = "SeekPlayer"
     override var mainUrl = "https://123.seekplayer.vip"
     override val requiresReferer = true
@@ -29,24 +29,36 @@ class Seekplayer : ExtractorApi() {
 
     override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
         val videoId = url.substringAfterLast("#")
+        Log.d(TAG, "id video: $videoId")
         val parsedUrl = java.net.URL(url)
+        Log.d(TAG, "parsedUrl: $parsedUrl")
         val host = parsedUrl.host
+        Log.d(TAG, "host: $host")
+
 
         try {
-            Log.d(TAG, "loadLinks: $url")
+            Log.d(TAG, "start extractor Links: $url")
             // 1. Gọi API để lấy dữ liệu đã mã hóa dưới dạng chuỗi hex
-            val encryptedResponseHex = app.get("https://$host/api/v1/video?id=$videoId",headers = mapOf("User-Agent" to PC_USER_AGENT), mainUrl).text
+            val encryptedResponseHex = app.get("https://$host/api/v1/video?id=$videoId",headers = mapOf("User-Agent" to PC_USER_AGENT), mainUrl).text.trim()
+            Log.d(TAG, "encryptedResponseHex: $encryptedResponseHex")
             val encryptedData = hexStringToByteArray(encryptedResponseHex)
 
             // 2. Tạo Khóa (Key) và IV (Initialization Vector)
             val key = generateKey(host)
-            val iv = generateIv(host, url.substringAfter("#"))
+            Log.d(TAG, "key: $key")
+            val iv = generateIv(host, videoId)
+            Log.d(TAG, "iv: $iv")
+
 
             // 3. Giải mã dữ liệu
             val decryptedJson = decrypt(encryptedData, key, iv)
+            Log.d(TAG, "decryptedJson: $decryptedJson.text")
+
 
             // 4. Parse JSON để lấy link M3U8
             val m3u8Url = tryParseJson<VideoSource>(decryptedJson)?.hls
+            Log.d(TAG, "link phát: $m3u8Url")
+
 
             if (m3u8Url != null) {
                 return listOf(
