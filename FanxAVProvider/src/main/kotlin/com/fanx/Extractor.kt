@@ -1,18 +1,20 @@
 package com.fanx
+
+import android.util.Base64
 import android.util.Log
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.Formatter
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import kotlin.text.toByteArray
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
 open class Seekplayer : ExtractorApi() {
     override var name = "SeekPlayer"
@@ -21,44 +23,43 @@ open class Seekplayer : ExtractorApi() {
 
     companion object {
         private const val TAG = "FanxProvider"
-        private const val PC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
+        private const val PC_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
+
+        private const val KEY_SECRET = "25742532592138962829065199652030"
+        private const val IV_SECRET = "54674138327930864535348328456486"
     }
 
-    // Lớp data để parse JSON sau khi giải mã
     private data class VideoSource(val hls: String?)
 
     override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
         val videoId = url.substringAfterLast("#")
-        Log.d(TAG, "id video: $videoId")
-        val parsedUrl = java.net.URL(url)
-        Log.d(TAG, "parsedUrl: $parsedUrl")
-        val host = parsedUrl.host
-        Log.d(TAG, "host: $host")
-
-
+        val host = java.net.URL(url).host
         try {
             Log.d(TAG, "start extractor Links: $url")
-            // 1. Gọi API để lấy dữ liệu đã mã hóa dưới dạng chuỗi hex
-            val encryptedResponseHex = app.get("https://$host/api/v1/video?id=$videoId",headers = mapOf("User-Agent" to PC_USER_AGENT), mainUrl).text.trim()
-            Log.d(TAG, "encryptedResponseHex: $encryptedResponseHex")
-            val encryptedData = hexStringToByteArray(encryptedResponseHex)
+            val apiUrl = "https://$host/api/v1/info?id=$videoId"
+            Log.d(TAG, "Requesting API URL: $apiUrl")
 
-            // 2. Tạo Khóa (Key) và IV (Initialization Vector)
-            val key = generateKey(host)
-            Log.d(TAG, "key: $key")
-            val iv = generateIv(host, videoId)
-            Log.d(TAG, "iv: $iv")
+            val raw = app.get(apiUrl, headers = mapOf("User-Agent" to PC_USER_AGENT)).text.trim()
 
+            // thử decode base64, nếu lỗi fallback về hex
+            val encryptedData = try {
+                Base64.decode(raw, Base64.DEFAULT)
+            } catch (e: IllegalArgumentException) {
+                hexStringToByteArray(raw)
+            }
 
-            // 3. Giải mã dữ liệu
-            val decryptedJson = decrypt(encryptedData, key, iv)
-            Log.d(TAG, "decryptedJson: $decryptedJson.text")
+            val key = md5(KEY_SECRET + host.substringBefore("."))
+            val iv = md5(videoId + IV_SECRET)
 
+            Log.d(TAG, "key (MD5): ${toHexString(key)}")
+            Log.d(TAG, "iv  (MD5): ${toHexString(iv)}")
 
-            // 4. Parse JSON để lấy link M3U8
-            val m3u8Url = tryParseJson<VideoSource>(decryptedJson)?.hls
-            Log.d(TAG, "link phát: $m3u8Url")
+            val decrypted = decrypt(encryptedData, key, iv)
+            Log.d(TAG, "decrypted (preview): ${decrypted.take(200)}")
 
+            val m3u8Url = tryParseJson<VideoSource>(decrypted)?.hls
+            Log.d(TAG, "m3u8 link: $m3u8Url")
 
             if (m3u8Url != null) {
                 return listOf(
@@ -66,90 +67,91 @@ open class Seekplayer : ExtractorApi() {
                         source = this.name,
                         name = this.name,
                         url = m3u8Url,
-                        type = ExtractorLinkType.M3U8
+                        type = ExtractorLinkType.M3U8,
                     ) {
-                        this.referer = referer ?: ""
                         this.quality = Qualities.Unknown.value
                     }
                 )
             }
-        } catch (_: Exception) {}
-
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in getUrl", e)
+        }
         return null
     }
 
-    // --- CÁC HÀM TIỆN ÍCH VÀ LOGIC GIẢI MÃ ---
 
-    private fun decrypt(encryptedData: ByteArray, key: ByteArray, iv: ByteArray): String {
-        val secretKey = SecretKeySpec(key, "AES")
-        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-        cipher.init(Cipher.DECRYPT_MODE, secretKey, IvParameterSpec(iv))
-        val decryptedBytes = cipher.doFinal(encryptedData)
-        return String(decryptedBytes, StandardCharsets.UTF_8)
-    }
+    private fun decrypt(data: ByteArray, key: ByteArray, iv: ByteArray): String {
+        return try {
+            // AES CTR
+            val cipher = Cipher.getInstance("AES/CTR/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+            val aesOut = cipher.doFinal(data)
 
-    private fun sha1(input: String): ByteArray {
-        return MessageDigest.getInstance("SHA-1").digest(input.toByteArray(StandardCharsets.UTF_8))
-    }
+            // XOR 0x6E
+            val xored = aesOut.map { (it.toInt() xor 0x6E).toByte() }.toByteArray()
 
-    private fun generateKey(host: String): ByteArray {
-        val const1 = 10
-        val const2 = 110
-        val const3 = 1
-        var result = ""
+            // Giải nén zlib (có header)
+            val inflater = java.util.zip.Inflater(true)  // <= fix chính ở đây
+            inflater.setInput(xored)
+            val buf = ByteArray(8192)
+            val out = java.io.ByteArrayOutputStream()
+            while (!inflater.finished()) {
+                val n = inflater.inflate(buf)
+                if (n <= 0) break
+                out.write(buf, 0, n)
+            }
+            inflater.end()
 
-        val specialChar = "áµŸ"
-        val charCodeStr = (specialChar[0].code).toString()
-        val reversed = charCodeStr.reversed()
-
-        for (char in reversed) {
-            result += (const1 + char.toString().toInt()).toChar()
+            val text = out.toString(Charsets.UTF_8.name())
+            Log.d(TAG, "✅ final decrypted JSON (preview): ${text.take(200)}")
+            text
+        } catch (e: Exception) {
+            Log.e(TAG, "decrypt fail (Ask Gemini)", e)
+            ""
         }
-
-        result += host[const1 / 10]
-        result += result.slice(1..2)
-        result += "${const2.toChar()}${(const2 - 1).toChar()}${(const2 + 7).toChar()}"
-
-        val nums = "3579".map { it.toString() }
-        result += (nums[3] + nums[2]).toInt().toChar()
-        result += (nums[1] + nums[2]).toInt().toChar()
-        result += (nums[0].toInt() * const3 + const3 + nums[3].toInt()).toChar()
-        result += (nums[0].toInt() * const3 + const3 + nums[3].toInt()).toChar()
-
-        val reversedNums = nums.reversed().joinToString("").slice(0..1)
-        result += (nums[3].toInt() * const1 + nums[3].toInt() * const3).toChar()
-        result += reversedNums.toInt().toChar()
-
-        return result.toByteArray(StandardCharsets.UTF_8)
     }
 
-    private fun generateIv(host: String, hash: String): ByteArray {
-        val hostWithSlash = "$host//"
-        val someLength = host.length * hostWithSlash.length
-        val const1 = 1
-        var result1 = ""
-        for (i in const1 until 10) {
-            result1 += (i + someLength).toChar()
+    // helper sẵn có (inflateWithFlag đã có trước) — nếu chưa, thêm:
+    private fun inflateWithFlag(input: ByteArray, zlibWrapped: Boolean): String? {
+        return try {
+            val inflater = java.util.zip.Inflater(zlibWrapped)
+            inflater.setInput(input)
+            val buf = ByteArray(8192)
+            val out = java.io.ByteArrayOutputStream()
+            while (true) {
+                val n = inflater.inflate(buf)
+                if (n > 0) out.write(buf, 0, n)
+                else if (inflater.finished() || inflater.needsInput()) break
+            }
+            inflater.end()
+            out.toString(Charsets.UTF_8.name())
+        } catch (e: Exception) {
+            null
         }
-
-        var someStr = ""
-        someStr = const1.toString() + someStr + const1.toString() + someStr + const1.toString()
-
-        val lengthTimesHash = someStr.length * (if (hash.isNotEmpty()) hash[0].code else 0)
-        val anotherVal = someStr.toInt() * const1 + host.length
-        val finalVal1 = anotherVal + 4
-        val hostCharCode = if (host.length > const1) host[const1].code else 0
-        val finalVal2 = hostCharCode * const1 - 2
-
-        result1 += "${someLength.toChar()}${someStr.toInt().toChar()}${lengthTimesHash.toChar()}${anotherVal.toChar()}${finalVal1.toChar()}${hostCharCode.toChar()}${finalVal2.toChar()}"
-
-        return sha1(result1).copyOfRange(0, 16)
     }
+
+
+
+    private fun md5(input: String): ByteArray =
+        MessageDigest.getInstance("MD5").digest(input.toByteArray(StandardCharsets.UTF_8))
 
     private fun hexStringToByteArray(hex: String): ByteArray {
-        check(hex.length % 2 == 0) { "Must have an even length" }
-        return hex.chunked(2)
-            .map { it.toInt(16).toByte() }
-            .toByteArray()
+        val len = hex.length
+        val data = ByteArray(len / 2)
+        var i = 0
+        while (i < len) {
+            data[i / 2] = ((Character.digit(hex[i], 16) shl 4)
+                    + Character.digit(hex[i + 1], 16)).toByte()
+            i += 2
+        }
+        return data
+    }
+
+    private fun toHexString(bytes: ByteArray): String {
+        val f = Formatter()
+        for (b in bytes) f.format("%02x", b)
+        val s = f.toString()
+        f.close()
+        return s
     }
 }
