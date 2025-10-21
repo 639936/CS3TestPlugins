@@ -19,12 +19,12 @@ cloudstream {
     * 2: Slow
     * 3: Beta-only
     **/
-    status = 1 // Will be 3 if unspecified
+    status = 1
 
     tvTypes = listOf("NSFW")
 
     language = "vi"
 
     // Random CC logo I found
-    iconUrl = "https://upload.wikimedia.org/wikipedia/commons/2/2f/Korduene_Logo.png"
+    iconUrl = "https://cdn-icons-png.flaticon.com/512/9484/9484251.png"
 }
