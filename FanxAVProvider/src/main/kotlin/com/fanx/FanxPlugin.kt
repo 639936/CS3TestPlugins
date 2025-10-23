@@ -9,7 +9,9 @@ import com.lagradost.cloudstream3.extractors.EmturbovidExtractor
 class FanxPlugin : Plugin() {
     override fun load(context: Context) {
         registerMainAPI(FanxProvider())
-        registerExtractorAPI(Seekplayer())
-        registerExtractorAPI(EmturbovidExtractor())
+     //   registerExtractorAPI(Allplayer())
+//        registerExtractorAPI(EmturbovidExtractor())
+//        registerExtractorAPI(Turbovidhls())
+      //  registerExtractorAPI(Hglink())
     }
 }
