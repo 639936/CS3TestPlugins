@@ -67,7 +67,7 @@ class FanxProvider : MainAPI() {
         val description = document.selectFirst("meta[itemprop=description]")?.attr("content")
         val poster = document.selectFirst("meta[itemprop=thumbnailUrl]")?.attr("content")
 
-        val streamLink = document.selectFirst("meta[itemprop=embedURL]")?.attr("content")
+        var streamLink = document.selectFirst("meta[itemprop=embedURL]")?.attr("content")
             // ?.takeIf { it.isNotBlank() } sẽ biến một chuỗi rỗng thành null,
             // để có thể kích hoạt toán tử elvis ?:
             ?.takeIf { it.isNotBlank() }
@@ -76,8 +76,11 @@ class FanxProvider : MainAPI() {
                 ?.takeIf { it.isNotBlank() }
             ?: // Nếu cả hai cách trên đều không thành công, lúc này mới báo lỗi
             throw ErrorLoadingException("Không tìm thấy link stream ở cả meta tag và iframe")
-
-
+        if (streamLink.contains("seekplay", ignoreCase = true)) {
+            streamLink = document.selectFirst("#tracking-url")?.attr("href")
+                ?.takeIf { it.isNotBlank() }
+                ?: throw ErrorLoadingException("Stream link chứa 'seekplay' nhưng không tìm thấy #tracking-url")
+        }
         Log.d(TAG, "tìm thấy stream link: $streamLink")
 
         return newMovieLoadResponse(title, url, TvType.NSFW, streamLink) {
