@@ -3,7 +3,10 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.*
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import java.net.URLEncoder
 
 
@@ -20,17 +23,17 @@ class VlxxProvider : MainAPI() {
 
     private val mainPageItems = listOf(
         Pair("Phim mới", "/new"),
-        Pair("DAY Phim sex hay", "/phim-sex-hay/#day"),
-        Pair("WEEK Phim sex hay", "/phim-sex-hay/#week"),
-        Pair("MONTH Phim sex hay", "/phim-sex-hay/#month"),
-        Pair("YEAR Phim sex hay", "/phim-sex-hay/#year"),
-        Pair("ALL Phim sex hay", "/phim-sex-hay/#all"),
-        Pair("Việt Sub", "/vietsub/"),
-        Pair("Không che", "/khong-che/"),
-        Pair("Học sinh", "/hoc-sinh/"),
-        Pair("Vụng trộm- Ngoại tinh", "/vung-trom/"),
-        Pair("Sex Mỹ- Châu Âu", "/chau-au/"),
-        Pair("Phim cấp 3", "/cap-3/")
+        Pair("DAY Phim sex hay", "/ajax.php?likes&type=day&page="),
+        Pair("WEEK Phim sex hay", "/ajax.php?likes&type=week&page="),
+        Pair("MONTH Phim sex hay", "/ajax.php?likes&type=month&page="),
+        Pair("YEAR Phim sex hay", "/ajax.php?likes&type=year&page="),
+        Pair("ALL Phim sex hay", "/ajax.php?likes&type=all&page="),
+        Pair("Việt Sub", "/vietsub"),
+        Pair("Không che", "/khong-che"),
+        Pair("Học sinh", "/hoc-sinh"),
+        Pair("Vụng trộm- Ngoại tinh", "/vung-trom"),
+        Pair("Sex Mỹ- Châu Âu", "/chau-au"),
+        Pair("Phim cấp 3", "/cap-3")
     )
 
     override suspend fun getMainPage(
@@ -38,17 +41,13 @@ class VlxxProvider : MainAPI() {
         request: MainPageRequest
     ): HomePageResponse {
         val lists = mainPageItems.amap { (name, urlPart) ->
-                val url = if (page == 1) {
-                    if (urlPart.contains("new")) {
-                        "$mainUrl/"
-                    } else {
-                        "$mainUrl$urlPart"
+                val url = if (urlPart.contains("ajax.php"))  "$mainUrl$urlPart$page"
+                    else {
+                        if (page == 1) "$mainUrl$urlPart"
+                    else "$mainUrl$urlPart/$page"
                     }
-                } else {
-                    "$mainUrl$urlPart/$page/"
-                }
                 val document = app.get(url, headers = mapOf("User-Agent" to PC_USER_AGENT)).document
-                val videos = document.select("#container .video-item").mapNotNull {
+                val videos = document.select("#video-list .video-item").mapNotNull {
                     toSearchResult(it)
                 }
                 HomePageList(name, videos)
@@ -73,7 +72,7 @@ class VlxxProvider : MainAPI() {
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
         val url = "$mainUrl/search/$encodedQuery"
         val document = app.get(url, headers = mapOf("User-Agent" to PC_USER_AGENT)).document
-        return document.select("#container .video-item").mapNotNull { toSearchResult(it) }
+        return document.select("#video-list .video-item").mapNotNull { toSearchResult(it) }
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -82,10 +81,10 @@ class VlxxProvider : MainAPI() {
         val description = document.selectFirst(".video-description")?.text()
         val poster = document.selectFirst("img")?.attr("src")
 
-        val streamLink = document.selectFirst("iframe")?.attr("src")
+        val streamLink = document.selectFirst("#video")?.attr("data-id")
                 ?.takeIf { it.isNotBlank() }
-            ?:
-            throw ErrorLoadingException("Không tìm thấy link stream")
+            ?: throw ErrorLoadingException("No stream link found")
+
 
         return newMovieLoadResponse(title, url, TvType.NSFW, streamLink) {
             this.plot = description
@@ -98,7 +97,20 @@ class VlxxProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        loadExtractor(data, subtitleCallback, callback)
+        listOf("s1",
+            "s2"
+        ).amap { stream ->
+            callback.invoke(
+                newExtractorLink(
+                    source = "VLXX$stream",
+                    name = "VLXX$stream",
+                    url = "https://rr3---sn-8pxuuxa-i5ozr.qooglevideo.com/manifest-$stream/0$data.vl",
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.quality = Qualities.Unknown.value
+                }
+            )
+        }
         return true
     }
 }
