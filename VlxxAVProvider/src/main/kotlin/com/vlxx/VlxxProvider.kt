@@ -83,9 +83,9 @@ class VlxxProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = mapOf("User-Agent" to PC_USER_AGENT)).document
-        val title = document.select("meta[property=og:title]").attr("content")?.takeIf { it.isNotBlank() }?: document.selectFirst("#page-title")?.text() ?: "N/A"
-        val description = document.select("meta[property=og:description]").attr("content")?.takeIf { it.isNotBlank() }?: document.selectFirst(".video-description")?.text()
-        val poster = document.select("meta[property=og:image]").attr("content")?.takeIf { it.isNotBlank() }?: document.selectFirst("img")?.attr("src")
+        val title = document.select("meta[property=og:title]").attr("content").takeIf { it.isNotBlank() }?: document.selectFirst("#page-title")?.text() ?: "N/A"
+        val description = document.select("meta[property=og:description]").attr("content").takeIf { it.isNotBlank() }?: document.selectFirst(".video-description")?.text() ?: "N/A"
+        val poster = document.select("meta[property=og:image]").attr("content").takeIf { it.isNotBlank() }?: document.selectFirst("img")?.attr("src") ?: "N/A"
         val recommendations = document.select("#video-list .video-item").mapNotNull {
             toSearchResult(it) // Tái sử dụng hàm toSearchResult bạn đã viết
         }
