@@ -5,9 +5,8 @@ import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
-//import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
-//import java.net.URLEncoder
+import kotlin.text.padStart
 
 
 class VlxxProvider : MainAPI() {
@@ -62,7 +61,9 @@ class VlxxProvider : MainAPI() {
         val aTag = element.selectFirst("a") ?: return null
         val title = aTag.attr("title")
         val href = aTag.attr("href")
-        val posterUrl = element.selectFirst("img")?.attr("data-original")
+        val posterUrl = element.selectFirst("img")?.attr("data-original")?.takeIf { it.isNotBlank() }
+            ?:element.selectFirst("img")?.attr("data-src")?.takeIf { it.isNotBlank() }
+            ?:element.selectFirst("img")?.attr("src")
 
         if (title.isBlank() || href.isBlank()) return null
 
@@ -86,40 +87,86 @@ class VlxxProvider : MainAPI() {
         val document = app.get(url, headers = mapOf("User-Agent" to PC_USER_AGENT)).document
         val title = document.select("meta[property=og:title]").attr("content").takeIf { it.isNotBlank() }?: document.selectFirst("#page-title")?.text() ?: "N/A"
         val description = document.select("meta[property=og:description]").attr("content").takeIf { it.isNotBlank() }?: document.selectFirst(".video-description")?.text() ?: "N/A"
-        val poster = document.select("meta[property=og:image]").attr("content").takeIf { it.isNotBlank() }?: document.selectFirst("img")?.attr("src") ?: "N/A"
+
+        val poster = document.select("meta[property=og:image]").attr("content").takeIf { it.isNotBlank() }
+            ?: document.selectFirst("img")?.attr("data-original")?.takeIf { it.isNotBlank() }
+            ?:document.selectFirst("img")?.attr("data-src")?.takeIf { it.isNotBlank() }
+            ?:document.selectFirst("img")?.attr("src")
         val recommendations = document.select("#video-list .video-item").mapNotNull {
             toSearchResult(it) // Tái sử dụng hàm toSearchResult bạn đã viết
         }
         val tags = document.select(".video-tags .actress-tag a").map {
             it.text() // Lấy nội dung text của mỗi thẻ tag
         }
+        val idphim = document.selectFirst("#video")?.attr("data-id")
 
-        var streamLink = document.selectFirst("#video")?.attr("data-id")
-                ?.takeIf { it.isNotBlank() }
-            ?: throw ErrorLoadingException("No stream link found")
-        streamLink = streamLink.padStart(5, '0')
+        // Danh sách để chứa tất cả các tập phim từ tất cả các phần
+        val allEpisodes = mutableListOf<Episode>()
+        allEpisodes.add(
+            newEpisode(idphim) {
+                this.name = title
+                this.season = 1
+                this.episode = 1
+                this.posterUrl = poster
+                this.description = "Phim hiện tại"
+            }
+        )
 
-        return newMovieLoadResponse(title, url, TvType.NSFW, streamLink) {
+        val seasonElements = document.select(".video-tags .actress-tag a")
+
+        if (seasonElements.isNotEmpty()) {
+            seasonElements.forEachIndexed { index, seasonElement ->
+                val seasonNumber = index + 2
+                val linkSS = seasonElement.attr("href")
+                val nameSS = seasonElement.text()
+                val seasonUrl = "$mainUrl$linkSS"
+                val seasonDocument = app.get(seasonUrl, headers = mapOf("User-Agent" to PC_USER_AGENT)).document
+
+                val episodesInSeason = seasonDocument.select("#video-list .video-item").mapIndexedNotNull {idex, element ->
+
+                    val episodeName = element.select(".video-name a").attr("title").ifBlank { element.text() }
+                    val episodeUrl = element.select(".video-name a").attr("href").removeSuffix("/").substringAfterLast("/")
+                    if (episodeUrl.isBlank()) return@mapIndexedNotNull null
+                    val episodePosterUrl = element.selectFirst("img")?.attr("data-original")?.takeIf { it.isNotBlank() }
+                        ?:element.selectFirst("img")?.attr("data-src")?.takeIf { it.isNotBlank() }
+                        ?:element.selectFirst("img")?.attr("src")
+                    val episodeNumber = idex + 1
+                    newEpisode(episodeUrl) {
+                        this.name = episodeName
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                        this.posterUrl = episodePosterUrl
+                        this.description = nameSS
+                    }
+                }
+                allEpisodes.addAll(episodesInSeason)
+            }
+        }
+
+        return newTvSeriesLoadResponse(title, url, TvType.TvSeries, allEpisodes) {
             this.plot = description
             this.posterUrl = poster
             this.recommendations = recommendations
             this.tags = tags
         }
     }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val idstream = data.removeSuffix("/").substringAfterLast("/").padStart(5, '0')
+
         listOf("s1",
             "s2"
         ).amap { stream ->
             callback.invoke(
                 newExtractorLink(
-                    source = "VLXX$stream",
-                    name = "VLXX$stream",
-                    url = "https://rr3---sn-8pxuuxa-i5ozr.qooglevideo.com/manifest-$stream/$data.vl",
+                    source = "VLXX Server $stream",
+                    name = "VLXX $stream",
+                    url = "https://rr3---sn-8pxuuxa-i5ozr.qooglevideo.com/manifest-$stream/$idstream.vl",
                     type = ExtractorLinkType.M3U8
                 ) {
                     this.quality = Qualities.Unknown.value
