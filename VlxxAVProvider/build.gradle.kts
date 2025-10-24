@@ -2,10 +2,10 @@ dependencies {
     implementation("com.google.android.material:material:1.13.0")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
 }
-version = 1
+version = 2
 
 cloudstream {
-    description = "VLXX"
+    description = "VlxxAV"
     authors = listOf("vs69")
 
     /**

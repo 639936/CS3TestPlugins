@@ -81,10 +81,10 @@ class VlxxProvider : MainAPI() {
         val description = document.selectFirst(".video-description")?.text()
         val poster = document.selectFirst("img")?.attr("src")
 
-        val streamLink = document.selectFirst("#video")?.attr("data-id")
+        var streamLink = document.selectFirst("#video")?.attr("data-id")
                 ?.takeIf { it.isNotBlank() }
             ?: throw ErrorLoadingException("No stream link found")
-
+        streamLink = streamLink.padStart(5, '0')
 
         return newMovieLoadResponse(title, url, TvType.NSFW, streamLink) {
             this.plot = description
@@ -104,7 +104,7 @@ class VlxxProvider : MainAPI() {
                 newExtractorLink(
                     source = "VLXX$stream",
                     name = "VLXX$stream",
-                    url = "https://rr3---sn-8pxuuxa-i5ozr.qooglevideo.com/manifest-$stream/0$data.vl",
+                    url = "https://rr3---sn-8pxuuxa-i5ozr.qooglevideo.com/manifest-$stream/$data.vl",
                     type = ExtractorLinkType.M3U8
                 ) {
                     this.quality = Qualities.Unknown.value
