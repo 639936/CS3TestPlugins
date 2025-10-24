@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 //import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import java.net.URLEncoder
+//import java.net.URLEncoder
 
 
 class VlxxProvider : MainAPI() {
@@ -72,9 +72,10 @@ class VlxxProvider : MainAPI() {
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList? { // Sửa 1: Kiểu trả về
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val url = if (page == 1) "$mainUrl/search/$encodedQuery/"
-        else "$mainUrl/search/$encodedQuery/$page/"
+        //val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val key = query.trim().replace(Regex("\\s+"), "-").lowercase()
+        val url = if (page == 1) "$mainUrl/search/$key/"
+        else "$mainUrl/search/$key/$page/"
         val document = app.get(url, headers = mapOf("User-Agent" to PC_USER_AGENT)).document
 
         val results = document.select("#video-list .video-item").mapNotNull { toSearchResult(it) }
