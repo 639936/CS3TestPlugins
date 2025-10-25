@@ -1,4 +1,5 @@
 package com.vlxx
+//import com.lagradost.api.Log
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.*
 import org.jsoup.nodes.Element
@@ -6,8 +7,9 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import kotlin.text.padStart
-
+//import kotlin.text.padStart
+//import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
+import org.jsoup.Jsoup
 
 class VlxxProvider : MainAPI() {
     override var mainUrl = "https://vlxx.bz"
@@ -15,6 +17,7 @@ class VlxxProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.NSFW)
     override var lang = "vi"
     override val hasMainPage = true
+    override val hasDownloadSupport = false
 
     companion object {
         private const val PC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
@@ -98,12 +101,13 @@ class VlxxProvider : MainAPI() {
         val tags = document.select(".video-tags .actress-tag a").map {
             it.text() // Lấy nội dung text của mỗi thẻ tag
         }
-        val idphim = document.selectFirst("#video")?.attr("data-id")
+//        val idphim = document.selectFirst("#video")?.attr("data-id")
+        val linkphim = document.select("meta[property=og:url]").attr("content")
 
         // Danh sách để chứa tất cả các tập phim từ tất cả các phần
         val allEpisodes = mutableListOf<Episode>()
         allEpisodes.add(
-            newEpisode(idphim) {
+            newEpisode(linkphim) {
                 this.name = title
                 this.season = 1
                 this.episode = 1
@@ -125,7 +129,7 @@ class VlxxProvider : MainAPI() {
                 val episodesInSeason = seasonDocument.select("#video-list .video-item").mapIndexedNotNull {idex, element ->
 
                     val episodeName = element.select(".video-name a").attr("title").ifBlank { element.text() }
-                    val episodeUrl = element.select(".video-name a").attr("href").removeSuffix("/").substringAfterLast("/")
+                    val episodeUrl = element.select(".video-name a").attr("href") //.removeSuffix("/").substringAfterLast("/")
                     if (episodeUrl.isBlank()) return@mapIndexedNotNull null
                     val episodePosterUrl = element.selectFirst("img")?.attr("data-original")?.takeIf { it.isNotBlank() }
                         ?:element.selectFirst("img")?.attr("data-src")?.takeIf { it.isNotBlank() }
@@ -151,27 +155,68 @@ class VlxxProvider : MainAPI() {
         }
     }
 
+    // Data class để parse phản hồi JSON từ ajax.php
+    data class PlayerResponse(val player: String)
+
+    // Data class để parse đối tượng sources từ javascript của player
+//    data class SourceFile(val file: String)
+//    data class JwplayerSources(val sources: List<SourceFile>)
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val idstream = data.removeSuffix("/").substringAfterLast("/").padStart(5, '0')
+        // Lấy ID video từ URL đầu vào (data)
+        val idstream = data.removeSuffix("/").substringAfterLast("/")
+        //Log.d("VlxxProvider", "ID Video: $idstream $data")
 
-        listOf("s1",
-            "s2"
-        ).amap { stream ->
-            callback.invoke(
-                newExtractorLink(
-                    source = "VLXX Server $stream",
-                    name = "VLXX $stream",
-                    url = "https://rr3---sn-8pxuuxa-i5ozr.qooglevideo.com/manifest-$stream/$idstream.vl",
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.quality = Qualities.Unknown.value
+
+        // Lặp qua các server (1 và 2) bằng coroutine để xử lý song song
+        listOf("1", "2").amap { stream ->
+                // Bước 1: Lấy URL của iframe từ API
+                val ajaxUrl = "https://vlxx.bz/ajax.php"
+                val responseJson = app.post(
+                    ajaxUrl,
+                    data = mapOf(
+                        "vlxx_server" to stream,
+                        "id" to idstream,
+                        "server" to stream
+                    ),
+                    referer = data,
+                    headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                ).parsedSafe<PlayerResponse>()
+
+                // Phân tích HTML trong JSON để lấy src của iframe
+                val iframeSrc = responseJson?.player?.let { Jsoup.parse(it).selectFirst("iframe")?.attr("src") }
+//Log.d("VlxxProvider", "Iframe Src: $iframeSrc")
+
+                if (iframeSrc != null) {
+                    // Bước 2: Truy cập iframe để lấy link video cuối cùng
+                    val iframeContent = app.get(iframeSrc, referer = data).text
+//Log.d("VlxxProvider", "Iframe Content: $iframeContent")
+
+                    // Trích xuất chuỗi JSON từ `window.$$ops` một cách an toàn
+                    val opsJsonString = iframeContent.substringAfter("window.$\$ops =").substringBefore("window.")
+//Log.d("VlxxProvider", "Ops Json String: $opsJsonString")
+
+                    // Phân tích JSON để lấy `file` URL
+                    val finalUrl = opsJsonString.substringAfter("file\":\"").substringBefore("\"")
+//Log.d("VlxxProvider", "Final Url: $finalUrl")
+
+                        // Bước 3: Gọi callback với link cuối cùng
+                        callback.invoke(
+                            newExtractorLink(
+                                source = "VLXX Server $stream",
+                                name = "VLXX Server $stream",
+                                url = finalUrl,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.quality = Qualities.Unknown.value
+                            }
+                        )
                 }
-            )
         }
         return true
     }
