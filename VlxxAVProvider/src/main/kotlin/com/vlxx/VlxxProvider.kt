@@ -98,7 +98,7 @@ class VlxxProvider : MainAPI() {
         val recommendations = document.select("#video-list .video-item").mapNotNull {
             toSearchResult(it) // Tái sử dụng hàm toSearchResult bạn đã viết
         }
-        val tags = document.select(".video-tags .actress-tag a").map {
+        val tags = document.select(".video-tags .actress-tag a, .video-code").map {
             it.text() // Lấy nội dung text của mỗi thẻ tag
         }
 //        val idphim = document.selectFirst("#video")?.attr("data-id")
