@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">PikPak WebDAV</string>
+    <string name="app_user" translatable="false">Username</string>
+    <string name="app_pass" translatable="false">Password</string>
+    <string name="app_save" translatable="false">Save</string>
+</resources>
